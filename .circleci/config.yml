@@ -1,0 +1,68 @@
+version: 2.1
+workflows:
+  workflow:
+    jobs:
+      - check
+      - test
+jobs:
+  check:
+    working_directory: ~/my_project
+    docker:
+      - image: 'cimg/ruby:3.0.1'
+        environment:
+          BUNDLER_VERSION: 2.2.19
+          BUNDLE_RETRY: '3'
+    steps:
+      - checkout
+      - restore_cache:
+          key: v3-bundler-{{ checksum "Gemfile.lock" }}-{{ arch }}
+      - run: gem install bundler --version $BUNDLER_VERSION
+      - run: bundle config build.nokogiri --use-system-libraries
+      - run: bundle install --path=vendor/bundle --retry=$BUNDLE_RETRY
+      - save_cache:
+          key: v3-bundler-{{ checksum "Gemfile.lock" }}-{{ arch }}
+          paths:
+            - vendor/bundle
+      - run: bundle exec rubocop
+  test:
+    working_directory: ~/my_project
+    docker:
+      - image: 'cimg/ruby:3.0.1'
+      - image: 'circleci/postgres:13.2'
+        environment:
+          POSTGRES_DB: my_project_test
+          POSTGRES_PASSWORD: 'pass'
+          POSTGRES_USER: postgres
+    environment:
+      BUNDLE_JOBS: '3'
+      BUNDLE_RETRY: '3'
+      DATABASE_URL: postgresql://postgres:pass@localhost/my_project_test
+      RACK_ENV: test
+      RAILS_ENV: test
+      BUNDLER_VERSION: 2.2.19
+    parallelism: 1
+    steps:
+      - checkout
+      - run: gem install bundler
+      - restore_cache:
+          key: v3-bundler-{{ checksum "Gemfile.lock" }}-{{ arch }}
+      - run: gem install bundler --version $BUNDLER_VERSION
+      - run: bundle config build.nokogiri --use-system-libraries
+      - run: bundle install --path=vendor/bundle --retry=$BUNDLE_RETRY
+      - save_cache:
+          key: v3-bundler-{{ checksum "Gemfile.lock" }}-{{ arch }}
+          paths:
+            - vendor/bundle
+      - run:
+          name: Install apt dependencies
+          command: |
+            sudo apt update -q
+      - run:
+          name: Wait for DB
+          command: 'dockerize -wait tcp://localhost:5432 -timeout 1m'
+      - run:
+          name: Database setup
+          command: 'bundle exec rails db:schema:load --trace'
+      - run:
+          name: 'Run RSpec'
+          command: 'bundle exec rspec'
